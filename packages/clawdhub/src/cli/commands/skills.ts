@@ -4,6 +4,7 @@ import semver from "semver";
 import { apiRequest, downloadZip, registryUrl } from "../../http.js";
 import {
   ApiRoutes,
+  ApiV1AgentResponseSchema,
   ApiV1SearchResponseSchema,
   ApiV1SkillListResponseSchema,
   ApiV1SkillResolveResponseSchema,
@@ -74,64 +75,79 @@ export async function cmdInstall(
   slug: string,
   versionFlag?: string,
   force = false,
+  type: "skill" | "agent" = "skill",
 ) {
   const trimmed = normalizeSkillSlugOrFail(slug);
 
   const token = await getOptionalAuthToken();
 
   const registry = await getRegistry(opts, { cache: true });
-  await mkdir(opts.dir, { recursive: true });
-  const target = join(opts.dir, trimmed);
+  const targetDir = type === "agent" ? join(opts.dir, "..", "agents") : opts.dir;
+  await mkdir(targetDir, { recursive: true });
+  const target = join(targetDir, trimmed);
   if (!force) {
     const exists = await fileExists(target);
     if (exists) fail(`Already installed: ${target} (use --force)`);
   }
 
+  const apiPath = type === "agent" ? ApiRoutes.agents : ApiRoutes.skills;
   const spinner = createSpinner(`Resolving ${trimmed}`);
   try {
-    // Fetch skill metadata including moderation status
-    const skillMeta = await apiRequest(
-      registry,
-      { method: "GET", path: `${ApiRoutes.skills}/${encodeURIComponent(trimmed)}`, token },
-      ApiV1SkillResponseSchema,
-    );
-
-    // Check moderation status before proceeding
-    if (skillMeta.moderation?.isMalwareBlocked) {
-      spinner.fail(`Blocked: ${trimmed} is flagged as malicious`);
-      fail("This skill has been flagged as malware and cannot be installed.");
-    }
-
-    if (skillMeta.moderation?.isSuspicious && !force) {
-      spinner.stop();
-      console.log(
-        `\n⚠️  Warning: "${trimmed}" is flagged as suspicious by VirusTotal Code Insight.\n` +
-          "   This skill may contain risky patterns (crypto keys, external APIs, eval, etc.)\n" +
-          "   Review the skill code before use.\n",
+    // Fetch metadata
+    if (type === "skill") {
+      // Skill: full moderation checks
+      const skillMeta = await apiRequest(
+        registry,
+        { method: "GET", path: `${apiPath}/${encodeURIComponent(trimmed)}`, token },
+        ApiV1SkillResponseSchema,
       );
-      if (isInteractive()) {
-        const confirm = await promptConfirm("Install anyway?");
-        if (!confirm) fail("Installation cancelled");
-        spinner.start(`Resolving ${trimmed}`);
-      } else {
-        fail("Use --force to install suspicious skills in non-interactive mode");
-      }
-    }
 
-    const resolvedVersion = versionFlag ?? skillMeta.latestVersion?.version ?? null;
-    if (!resolvedVersion) fail("Could not resolve latest version");
+      if (skillMeta.moderation?.isMalwareBlocked) {
+        spinner.fail(`Blocked: ${trimmed} is flagged as malicious`);
+        fail("This skill has been flagged as malware and cannot be installed.");
+      }
+
+      if (skillMeta.moderation?.isSuspicious && !force) {
+        spinner.stop();
+        console.log(
+          `\n⚠️  Warning: "${trimmed}" is flagged as suspicious by VirusTotal Code Insight.\n` +
+            "   This skill may contain risky patterns (crypto keys, external APIs, eval, etc.)\n" +
+            "   Review the skill code before use.\n",
+        );
+        if (isInteractive()) {
+          const confirm = await promptConfirm("Install anyway?");
+          if (!confirm) fail("Installation cancelled");
+          spinner.start(`Resolving ${trimmed}`);
+        } else {
+          fail("Use --force to install suspicious skills in non-interactive mode");
+        }
+      }
+
+      const resolvedVersion = versionFlag ?? skillMeta.latestVersion?.version ?? null;
+      if (!resolvedVersion) fail("Could not resolve latest version");
+    } else {
+      // Agent: simpler resolution
+      const agentMeta = await apiRequest(
+        registry,
+        { method: "GET", path: `${apiPath}/${encodeURIComponent(trimmed)}`, token },
+        ApiV1AgentResponseSchema,
+      );
+
+      const resolvedVersion = versionFlag ?? agentMeta.latestVersion?.version ?? null;
+      if (!resolvedVersion) fail("Could not resolve latest version");
+    }
 
     if (versionFlag) {
       await apiRequest(
         registry,
         {
           method: "GET",
-          path: `${ApiRoutes.skills}/${encodeURIComponent(trimmed)}/versions/${encodeURIComponent(
-            resolvedVersion,
+          path: `${apiPath}/${encodeURIComponent(trimmed)}/versions/${encodeURIComponent(
+            versionFlag,
           )}`,
           token,
         },
-        ApiV1SkillVersionResponseSchema,
+        ApiV1SkillVersionResponseSchema, // Reuse schema for now
       );
     }
 
@@ -139,23 +155,36 @@ export async function cmdInstall(
       await rm(target, { recursive: true, force: true });
     }
 
-    spinner.text = `Downloading ${trimmed}@${resolvedVersion}`;
-    const zip = await downloadZip(registry, { slug: trimmed, version: resolvedVersion, token });
+    spinner.text = `Downloading ${trimmed}@${versionFlag ?? "latest"}`;
+    const zip = await downloadZip(registry, {
+      slug: trimmed,
+      version: versionFlag ?? "latest",
+      token,
+      type,
+    });
     await extractZipToDir(zip, target);
 
     await writeSkillOrigin(target, {
       version: 1,
       registry,
       slug: trimmed,
-      installedVersion: resolvedVersion,
+      installedVersion: versionFlag ?? "latest",
       installedAt: Date.now(),
     });
 
     const lock = await readLockfile(opts.workdir);
-    lock.skills[trimmed] = {
-      version: resolvedVersion,
-      installedAt: Date.now(),
-    };
+    if (type === "agent") {
+      if (!lock.agents) lock.agents = {};
+      lock.agents[trimmed] = {
+        version: versionFlag ?? "latest",
+        installedAt: Date.now(),
+      };
+    } else {
+      lock.skills[trimmed] = {
+        version: versionFlag ?? "latest",
+        installedAt: Date.now(),
+      };
+    }
     await writeLockfile(opts.workdir, lock);
     spinner.succeed(`OK. Installed ${trimmed} -> ${target}`);
   } catch (error) {
@@ -167,11 +196,12 @@ export async function cmdInstall(
 export async function cmdUpdate(
   opts: GlobalOpts,
   slugArg: string | undefined,
-  options: { all?: boolean; version?: string; force?: boolean },
+  options: { all?: boolean; version?: string; force?: boolean; type?: "skill" | "agent" },
   inputAllowed: boolean,
 ) {
   const slug = slugArg ? normalizeSkillSlugOrFail(slugArg) : undefined;
   const all = Boolean(options.all);
+  const type: "skill" | "agent" = options.type ?? "skill";
   if (!slug && !all) fail("Provide <slug> or --all");
   if (slug && all) fail("Use either <slug> or --all");
   if (options.version && !slug) fail("--version requires a single <slug>");
@@ -182,9 +212,12 @@ export async function cmdUpdate(
 
   const registry = await getRegistry(opts, { cache: true });
   const lock = await readLockfile(opts.workdir);
-  const slugs = slug ? [slug] : Object.keys(lock.skills).filter(isSafeSkillSlug);
+  const entries = type === "agent" ? (lock.agents ?? {}) : lock.skills;
+  const apiPath = type === "agent" ? ApiRoutes.agents : ApiRoutes.skills;
+  const slugs = slug ? [slug] : Object.keys(entries).filter(isSafeSkillSlug);
+  const name = type === "agent" ? "agents" : "skills";
   if (slugs.length === 0) {
-    console.log("No installed skills.");
+    console.log(`No installed ${name}.`);
     return;
   }
 
@@ -314,14 +347,15 @@ export async function cmdUpdate(
   await writeLockfile(opts.workdir, lock);
 }
 
-export async function cmdList(opts: GlobalOpts) {
+export async function cmdList(opts: GlobalOpts, type: "skill" | "agent" = "skill") {
   const lock = await readLockfile(opts.workdir);
-  const entries = Object.entries(lock.skills);
-  if (entries.length === 0) {
-    console.log("No installed skills.");
+  const entries = type === "agent" ? (lock.agents ?? {}) : lock.skills;
+  const name = type === "agent" ? "agents" : "skills";
+  if (Object.keys(entries).length === 0) {
+    console.log(`No installed ${name}.`);
     return;
   }
-  for (const [slug, entry] of entries) {
+  for (const [slug, entry] of Object.entries(entries)) {
     console.log(`${slug}  ${entry.version ?? "latest"}`);
   }
 }
@@ -331,11 +365,13 @@ export async function cmdUninstall(
   slug: string,
   options: { yes?: boolean } = {},
   inputAllowed: boolean,
+  type: "skill" | "agent" = "skill",
 ) {
   const trimmed = normalizeSkillSlugOrFail(slug);
 
   const lock = await readLockfile(opts.workdir);
-  if (!lock.skills[trimmed]) {
+  const entries = type === "agent" ? (lock.agents ?? {}) : lock.skills;
+  if (!entries[trimmed]) {
     fail(`Not installed: ${trimmed}`);
   }
 
@@ -351,11 +387,17 @@ export async function cmdUninstall(
 
   const spinner = createSpinner(`Uninstalling ${trimmed}`);
   try {
-    const target = join(opts.dir, trimmed);
+    const targetDir = type === "agent" ? join(opts.dir, "..", "agents") : opts.dir;
+    const target = join(targetDir, trimmed);
 
     await rm(target, { recursive: true, force: true });
 
-    delete lock.skills[trimmed];
+    delete entries[trimmed];
+    if (type === "agent") {
+      lock.agents = entries;
+    } else {
+      lock.skills = entries;
+    }
     await writeLockfile(opts.workdir, lock);
 
     spinner.succeed(`Uninstalled ${trimmed}`);

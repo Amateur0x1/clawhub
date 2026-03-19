@@ -15,6 +15,11 @@ import {
   soulsGetRouterV1Handler,
   soulsPostRouterV1Handler,
 } from "./httpApiV1/soulsV1";
+import {
+  agentsGetRouterV1Handler,
+  listAgentsV1Handler,
+  publishAgentV1Handler,
+} from "./httpApiV1/agentsV1";
 import { starsDeleteRouterV1Handler, starsPostRouterV1Handler } from "./httpApiV1/starsV1";
 import { transfersGetRouterV1Handler } from "./httpApiV1/transfersV1";
 import { usersListV1Handler, usersPostRouterV1Handler } from "./httpApiV1/usersV1";
@@ -37,6 +42,10 @@ export const soulsDeleteRouterV1Http = httpAction(soulsDeleteRouterV1Handler);
 export const starsPostRouterV1Http = httpAction(starsPostRouterV1Handler);
 export const starsDeleteRouterV1Http = httpAction(starsDeleteRouterV1Handler);
 export const transfersGetRouterV1Http = httpAction(transfersGetRouterV1Handler);
+
+export const listAgentsV1Http = httpAction(listAgentsV1Handler);
+export const agentsGetRouterV1Http = httpAction(agentsGetRouterV1Handler);
+export const publishAgentV1Http = httpAction(publishAgentV1Handler);
 
 export const whoamiV1Http = httpAction(whoamiV1Handler);
 export const usersPostRouterV1Http = httpAction(usersPostRouterV1Handler);

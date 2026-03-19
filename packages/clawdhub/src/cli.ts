@@ -192,13 +192,15 @@ program
 
 program
   .command("install")
-  .description("Install into <dir>/<slug>")
-  .argument("<slug>", "Skill slug")
+  .description("Install skill or agent into <dir>/<slug>")
+  .argument("<slug>", "Skill or agent slug")
   .option("--version <version>", "Version to install")
   .option("--force", "Overwrite existing folder")
+  .option("--type <type>", "Type: skill or agent", "skill")
   .action(async (slug, options) => {
     const opts = await resolveGlobalOpts();
-    await cmdInstall(opts, slug, options.version, options.force);
+    const type = options.type === "agent" ? "agent" : "skill";
+    await cmdInstall(opts, slug, options.version, options.force, type);
   });
 
 program
@@ -271,18 +273,81 @@ program
 
 program
   .command("publish")
-  .description("Publish skill from folder")
-  .argument("<path>", "Skill folder path")
-  .option("--slug <slug>", "Skill slug")
+  .description("Publish skill or agent from folder")
+  .argument("<path>", "Skill or agent folder path")
+  .option("--slug <slug>", "Skill or agent slug")
   .option("--name <name>", "Display name")
   .option("--version <version>", "Version (semver)")
   .option("--fork-of <slug[@version]>", "Mark as a fork of an existing skill")
   .option("--changelog <text>", "Changelog text")
   .option("--tags <tags>", "Comma-separated tags", "latest")
+  .option("--type <type>", "Type: skill or agent", "skill")
   .action(async (folder, options) => {
     const opts = await resolveGlobalOpts();
-    await cmdPublish(opts, folder, options);
+    const type = options.type === "agent" ? "agent" : "skill";
+    await cmdPublish(opts, folder, { ...options, type });
   });
+
+// ============================================================================
+// Agent subcommand group
+// ============================================================================
+const agent = program
+  .command("agent")
+  .description("Manage and distribute AI agents");
+
+agent
+  .command("publish <agent-id>")
+  .description("Publish an agent from openclaw config")
+  .option("--name <name>", "Display name (defaults to agent name in config)")
+  .option("--version <version>", "Version (semver)")
+  .option("--changelog <text>", "Changelog text")
+  .option("--tags <tags>", "Comma-separated tags", "latest")
+  .action(async (agentId, options) => {
+    const opts = await resolveGlobalOpts();
+    await cmdPublish(opts, agentId, { ...options, type: "agent" });
+  });
+
+agent
+  .command("install <slug>")
+  .description("Install an agent")
+  .option("--version <version>", "Version to install")
+  .option("--force", "Overwrite existing folder")
+  .action(async (slug, options) => {
+    const opts = await resolveGlobalOpts();
+    await cmdInstall(opts, slug, options.version, options.force, "agent");
+  });
+
+agent
+  .command("update [slug]")
+  .description("Update installed agents")
+  .option("--all", "Update all installed agents")
+  .option("--version <version>", "Update to specific version (single slug only)")
+  .option("--force", "Overwrite when local files do not match any version")
+  .action(async (slug, options) => {
+    const opts = await resolveGlobalOpts();
+    await cmdUpdate(opts, slug, { ...options, type: "agent" }, isInputAllowed());
+  });
+
+agent
+  .command("uninstall <slug>")
+  .description("Uninstall an agent")
+  .option("--yes", "Skip confirmation")
+  .action(async (slug, options) => {
+    const opts = await resolveGlobalOpts();
+    await cmdUninstall(opts, slug, options, isInputAllowed(), "agent");
+  });
+
+agent
+  .command("list")
+  .description("List installed agents (from lockfile)")
+  .action(async () => {
+    const opts = await resolveGlobalOpts();
+    await cmdList(opts, "agent");
+  });
+
+// ============================================================================
+// Skill management commands
+// ============================================================================
 
 program
   .command("delete")

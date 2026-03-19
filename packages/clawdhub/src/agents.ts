@@ -1,22 +1,33 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import { unzipSync } from "fflate";
 import ignore from "ignore";
 import mime from "mime";
-import {
-  type Lockfile,
-  LockfileSchema,
-  parseArk,
-  TEXT_FILE_EXTENSION_SET,
-} from "./schema/index.js";
+import { type Lockfile, LockfileSchema, parseArk } from "./schema/index.js";
 
-const DOT_DIR = ".clawhub";
-const LEGACY_DOT_DIR = ".clawdhub";
-const DOT_IGNORE = ".clawhubignore";
-const LEGACY_DOT_IGNORE = ".clawdhubignore";
+const DOT_DIR = ".agenthub";
+const DOT_IGNORE = ".agenthubignore";
 
-export type SkillOrigin = {
+// Default ignores for agent distribution (privacy-sensitive files)
+const DEFAULT_AGENT_IGNORES = [
+  ".git/",
+  "node_modules/",
+  `${DOT_DIR}/`,
+  // Privacy files (NEVER publish)
+  "USER.md",
+  "MEMORY.md",
+  "memory/",
+  "HEARTBEAT.md",
+  "BOOTSTRAP.md",
+  "TOOLS.md",
+  // System directories
+  ".openclaw/",
+  // Workspace memory subdirectory
+  "workspace/memory/",
+];
+
+export type AgentOrigin = {
   version: 1;
   registry: string;
   slug: string;
@@ -24,7 +35,7 @@ export type SkillOrigin = {
   installedAt: number;
 };
 
-export async function extractZipToDir(zipBytes: Uint8Array, targetDir: string) {
+export async function extractAgentZipToDir(zipBytes: Uint8Array, targetDir: string) {
   const entries = unzipSync(zipBytes);
   await mkdir(targetDir, { recursive: true });
   for (const [rawPath, data] of Object.entries(entries)) {
@@ -36,21 +47,28 @@ export async function extractZipToDir(zipBytes: Uint8Array, targetDir: string) {
   }
 }
 
-export async function listTextFiles(root: string) {
+export async function listAgentFiles(root: string) {
   const files: Array<{ relPath: string; bytes: Uint8Array; contentType?: string }> = [];
   const absRoot = resolve(root);
   const ig = ignore();
-  ig.add([".git/", "node_modules/", `${DOT_DIR}/`, `${LEGACY_DOT_DIR}/`]);
-  await addIgnoreFile(ig, join(absRoot, ".gitignore"));
+
+  // Add default agent ignores (privacy-sensitive files)
+  ig.add(DEFAULT_AGENT_IGNORES);
+
+  // Add user's custom .agenthubignore if exists
   await addIgnoreFile(ig, join(absRoot, DOT_IGNORE));
-  await addIgnoreFile(ig, join(absRoot, LEGACY_DOT_IGNORE));
+
+  // Also respect .gitignore for commonly ignored patterns
+  await addIgnoreFile(ig, join(absRoot, ".gitignore"));
 
   await walk(absRoot, async (absPath) => {
     const relPath = normalizePath(relative(absRoot, absPath));
     if (!relPath) return;
     if (ig.ignores(relPath)) return;
     const ext = relPath.split(".").at(-1)?.toLowerCase() ?? "";
-    if (!ext || !TEXT_FILE_EXTENSION_SET.has(ext)) return;
+    // For agents, we include all text files (not just code/text extensions)
+    // but skip binary files
+    if (!ext) return;
     const buffer = await readFile(absPath);
     const contentType = mime.getType(relPath) ?? "text/plain";
     files.push({ relPath, bytes: new Uint8Array(buffer), contentType });
@@ -58,13 +76,13 @@ export async function listTextFiles(root: string) {
   return files;
 }
 
-export type SkillFileHash = { path: string; sha256: string; size: number };
+export type AgentFileHash = { path: string; sha256: string; size: number };
 
 export function sha256Hex(bytes: Uint8Array) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-export function buildSkillFingerprint(files: Array<{ path: string; sha256: string }>) {
+export function buildAgentFingerprint(files: Array<{ path: string; sha256: string }>) {
   const normalized = files
     .filter((file) => Boolean(file.path) && Boolean(file.sha256))
     .map((file) => ({ path: file.path, sha256: file.sha256 }))
@@ -73,59 +91,49 @@ export function buildSkillFingerprint(files: Array<{ path: string; sha256: strin
   return createHash("sha256").update(payload).digest("hex");
 }
 
-export function hashSkillFiles(files: Array<{ relPath: string; bytes: Uint8Array }>) {
+export function hashAgentFiles(files: Array<{ relPath: string; bytes: Uint8Array }>) {
   const hashed = files.map((file) => ({
     path: file.relPath,
     sha256: sha256Hex(file.bytes),
     size: file.bytes.byteLength,
   }));
-  return { files: hashed, fingerprint: buildSkillFingerprint(hashed) };
+  return { files: hashed, fingerprint: buildAgentFingerprint(hashed) };
 }
 
-export function hashSkillZip(zipBytes: Uint8Array) {
-  const entries = unzipSync(zipBytes);
-  const hashed = Object.entries(entries)
-    .map(([rawPath, bytes]) => {
-      const safePath = sanitizeZipPath(rawPath);
-      if (!safePath) return null;
-      const ext = safePath.split(".").at(-1)?.toLowerCase() ?? "";
-      if (!ext || !TEXT_FILE_EXTENSION_SET.has(ext)) return null;
-      return { path: safePath, sha256: sha256Hex(bytes), size: bytes.byteLength };
-    })
-    .filter(Boolean) as SkillFileHash[];
-
-  return { files: hashed, fingerprint: buildSkillFingerprint(hashed) };
-}
-
-export async function readLockfile(workdir: string): Promise<Lockfile> {
-  const paths = [join(workdir, DOT_DIR, "lock.json"), join(workdir, LEGACY_DOT_DIR, "lock.json")];
-  for (const path of paths) {
-    try {
-      const raw = await readFile(path, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      return parseArk(LockfileSchema, parsed, "Lockfile");
-    } catch {
-      // try next
-    }
+export async function readAgentLockfile(workdir: string): Promise<Lockfile["agents"]> {
+  try {
+    const raw = await readFile(join(workdir, DOT_DIR, "lock.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    const lock = parseArk(LockfileSchema, parsed, "Lockfile");
+    return lock.agents ?? {};
+  } catch {
+    return {};
   }
-  return { version: 1, skills: {}, agents: {} };
 }
 
-export async function writeLockfile(workdir: string, lock: Lockfile) {
-  const path = join(workdir, DOT_DIR, "lock.json");
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+export async function writeAgentLockfile(workdir: string, agents: Lockfile["agents"]) {
+  const lockPath = join(workdir, DOT_DIR, "lock.json");
+  await mkdir(dirname(lockPath), { recursive: true });
+  // Read existing lockfile to preserve skills data
+  let existingLock = {};
+  try {
+    const existingRaw = await readFile(lockPath, "utf8");
+    existingLock = JSON.parse(existingRaw);
+  } catch {
+    // ignore
+  }
+  await writeFile(lockPath, `${JSON.stringify({ ...existingLock, agents }, null, 2)}\n`, "utf8");
 }
 
-export async function readSkillOrigin(skillFolder: string): Promise<SkillOrigin | null> {
+export async function readAgentOrigin(agentFolder: string): Promise<AgentOrigin | null> {
   const paths = [
-    join(skillFolder, DOT_DIR, "origin.json"),
-    join(skillFolder, LEGACY_DOT_DIR, "origin.json"),
+    join(agentFolder, DOT_DIR, "origin.json"),
+    join(agentFolder, ".clawhub", "origin.json"), // Legacy compat
   ];
   for (const path of paths) {
     try {
       const raw = await readFile(path, "utf8");
-      const parsed = JSON.parse(raw) as Partial<SkillOrigin>;
+      const parsed = JSON.parse(raw);
       if (parsed.version !== 1) return null;
       if (!parsed.registry || !parsed.slug || !parsed.installedVersion) return null;
       if (typeof parsed.installedAt !== "number" || !Number.isFinite(parsed.installedAt)) {
@@ -145,17 +153,14 @@ export async function readSkillOrigin(skillFolder: string): Promise<SkillOrigin 
   return null;
 }
 
-export async function writeSkillOrigin(skillFolder: string, origin: SkillOrigin) {
-  const path = join(skillFolder, DOT_DIR, "origin.json");
+export async function writeAgentOrigin(agentFolder: string, origin: AgentOrigin) {
+  const path = join(agentFolder, DOT_DIR, "origin.json");
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(origin, null, 2)}\n`, "utf8");
 }
 
 function normalizePath(path: string) {
-  return path
-    .split(sep)
-    .join("/")
-    .replace(/^\.\/+/, "");
+  return path.split("/").join("/").replace(/^\.\/+/, "");
 }
 
 function sanitizeRelPath(path: string) {
@@ -165,11 +170,8 @@ function sanitizeRelPath(path: string) {
   return normalized;
 }
 
-function sanitizeZipPath(path: string) {
-  return sanitizeRelPath(path);
-}
-
 async function walk(dir: string, onFile: (path: string) => Promise<void>) {
+  const { readdir } = await import("node:fs/promises");
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.name.startsWith(".")) continue;
@@ -184,7 +186,7 @@ async function walk(dir: string, onFile: (path: string) => Promise<void>) {
   }
 }
 
-async function addIgnoreFile(ig: ReturnType<typeof ignore>, path: string) {
+async function addIgnoreFile(ig: ignore.Ignore, path: string) {
   try {
     const raw = await readFile(path, "utf8");
     ig.add(raw.split(/\r?\n/));

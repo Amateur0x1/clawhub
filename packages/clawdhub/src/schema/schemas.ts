@@ -25,6 +25,12 @@ export const LockfileSchema = type({
       installedAt: "number",
     },
   },
+  "agents?": {
+    "[string]": {
+      version: "string|null",
+      installedAt: "number",
+    },
+  },
 });
 export type Lockfile = (typeof LockfileSchema)[inferred];
 
@@ -250,6 +256,61 @@ export const ApiV1SkillVersionResponseSchema = type({
 export const ApiV1SkillResolveResponseSchema = type({
   match: type({ version: "string" }).or("null"),
   latestVersion: type({ version: "string" }).or("null"),
+});
+
+// Agent schemas (v1 - simpler than skills, no moderation)
+export const ApiV1AgentResponseSchema = type({
+  agent: type({
+    slug: "string",
+    displayName: "string",
+    summary: "string|null?",
+    description: "string|null?",
+    tags: "unknown",
+    stats: "unknown",
+    createdAt: "number",
+    updatedAt: "number",
+  }).or("null"),
+  latestVersion: type({
+    version: "string",
+    createdAt: "number",
+    changelog: "string",
+  }).or("null"),
+  owner: type({
+    handle: "string|null",
+    displayName: "string|null?",
+    image: "string|null?",
+  }).or("null"),
+});
+
+export const ApiV1AgentVersionResponseSchema = type({
+  version: type({
+    version: "string",
+    createdAt: "number",
+    changelog: "string",
+    files: "unknown?",
+  }).or("null"),
+  agent: type({
+    slug: "string",
+    displayName: "string",
+  }).or("null"),
+});
+
+export const ApiV1AgentListResponseSchema = type({
+  items: type({
+    slug: "string",
+    displayName: "string",
+    summary: "string|null?",
+    tags: "unknown",
+    stats: "unknown",
+    createdAt: "number",
+    updatedAt: "number",
+    latestVersion: type({
+      version: "string",
+      createdAt: "number",
+      changelog: "string",
+    }).optional(),
+  }).array(),
+  nextCursor: "string|null",
 });
 
 export const ApiV1PublishResponseSchema = type({

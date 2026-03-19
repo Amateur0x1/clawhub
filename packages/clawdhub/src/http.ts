@@ -182,11 +182,12 @@ export async function fetchText(registry: string, args: TextRequestArgs): Promis
 
 export async function downloadZip(
   registry: string,
-  args: { slug: string; version?: string; token?: string },
+  args: { slug: string; version?: string; token?: string; type?: "skill" | "agent" },
 ) {
   const url = registryUrl(ApiRoutes.download, registry);
   url.searchParams.set("slug", args.slug);
   if (args.version) url.searchParams.set("version", args.version);
+  if (args.type) url.searchParams.set("type", args.type);
   return runWithRetries(async () => {
     if (isBun) {
       return await fetchBinaryViaCurl(url.toString(), args.token);

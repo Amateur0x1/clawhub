@@ -229,6 +229,76 @@ const souls = defineTable({
   .index("by_owner", ["ownerUserId"])
   .index("by_updated", ["updatedAt"]);
 
+// ============================================================================
+// Agents - Agent distribution (similar to skills but for AI agents)
+// ============================================================================
+
+const agents = defineTable({
+  slug: v.string(),
+  displayName: v.string(),
+  summary: v.optional(v.string()),
+  description: v.optional(v.string()),
+  ownerUserId: v.id("users"),
+  latestVersionId: v.optional(v.id("agentVersions")),
+  latestVersionSummary: v.optional(
+    v.object({
+      version: v.string(),
+      createdAt: v.number(),
+      changelog: v.string(),
+    }),
+  ),
+  tags: v.record(v.string(), v.id("agentVersions")),
+  softDeletedAt: v.optional(v.number()),
+  stats: v.object({
+    downloads: v.number(),
+    installsCurrent: v.optional(v.number()),
+    installsAllTime: v.optional(v.number()),
+    stars: v.number(),
+    versions: v.number(),
+    comments: v.number(),
+  }),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+})
+  .index("by_slug", ["slug"])
+  .index("by_owner", ["ownerUserId"])
+  .index("by_updated", ["updatedAt"])
+  .index("by_active_updated", ["softDeletedAt", "updatedAt"])
+  .index("by_active_created", ["softDeletedAt", "createdAt"])
+  .index("by_active_name", ["softDeletedAt", "displayName"]);
+
+const agentVersions = defineTable({
+  agentId: v.id("agents"),
+  version: v.string(),
+  fingerprint: v.optional(v.string()),
+  changelog: v.string(),
+  changelogSource: v.optional(v.union(v.literal("auto"), v.literal("user"))),
+  files: v.array(
+    v.object({
+      path: v.string(),
+      size: v.number(),
+      storageId: v.id("_storage"),
+      sha256: v.string(),
+      contentType: v.optional(v.string()),
+    }),
+  ),
+  createdBy: v.id("users"),
+  createdAt: v.number(),
+  softDeletedAt: v.optional(v.number()),
+})
+  .index("by_agent", ["agentId"])
+  .index("by_agent_version", ["agentId", "version"]);
+
+const agentVersionFingerprints = defineTable({
+  agentId: v.id("agents"),
+  versionId: v.id("agentVersions"),
+  fingerprint: v.string(),
+  createdAt: v.number(),
+})
+  .index("by_version", ["versionId"])
+  .index("by_fingerprint", ["fingerprint"])
+  .index("by_agent_fingerprint", ["agentId", "fingerprint"]);
+
 const skillVersions = defineTable({
   skillId: v.id("skills"),
   version: v.string(),
@@ -777,7 +847,10 @@ export default defineSchema({
   skills,
   skillSlugAliases,
   souls,
+  agents,
   skillVersions,
+  agentVersions,
+  agentVersionFingerprints,
   soulVersions,
   skillVersionFingerprints,
   skillBadges,

@@ -28,6 +28,7 @@ import type * as githubSoulBackupsNode from "../githubSoulBackupsNode.js";
 import type * as http from "../http.js";
 import type * as httpApi from "../httpApi.js";
 import type * as httpApiV1 from "../httpApiV1.js";
+import type * as httpApiV1_agentsV1 from "../httpApiV1/agentsV1.js";
 import type * as httpApiV1_shared from "../httpApiV1/shared.js";
 import type * as httpApiV1_skillsV1 from "../httpApiV1/skillsV1.js";
 import type * as httpApiV1_soulsV1 from "../httpApiV1/soulsV1.js";
@@ -131,6 +132,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   httpApi: typeof httpApi;
   httpApiV1: typeof httpApiV1;
+  "httpApiV1/agentsV1": typeof httpApiV1_agentsV1;
   "httpApiV1/shared": typeof httpApiV1_shared;
   "httpApiV1/skillsV1": typeof httpApiV1_skillsV1;
   "httpApiV1/soulsV1": typeof httpApiV1_soulsV1;

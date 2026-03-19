@@ -14,6 +14,9 @@ import {
   searchSkillsHttp,
 } from "./httpApi";
 import {
+  listAgentsV1Http,
+  agentsGetRouterV1Http,
+  publishAgentV1Http,
   listSkillsV1Http,
   listSoulsV1Http,
   publishSkillV1Http,
@@ -85,6 +88,25 @@ http.route({
   pathPrefix: `${ApiRoutes.skills}/`,
   method: "DELETE",
   handler: skillsDeleteRouterV1Http,
+});
+
+// Agent routes
+http.route({
+  path: ApiRoutes.agents,
+  method: "GET",
+  handler: listAgentsV1Http,
+});
+
+http.route({
+  pathPrefix: `${ApiRoutes.agents}/`,
+  method: "GET",
+  handler: agentsGetRouterV1Http,
+});
+
+http.route({
+  path: ApiRoutes.agents,
+  method: "POST",
+  handler: publishAgentV1Http,
 });
 
 http.route({
